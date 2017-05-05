@@ -1,0 +1,11 @@
+[package]
+name = "gdbm"
+version = "0.1.0"
+authors = ["Chris Holcombe <xfactor973@gmail.com>"]
+homepage = ""
+description = "Safe wrapper for gdbm-sys bindings"
+
+[dependencies]
+bitflags = "~0.8"
+gdbm-sys = {path = "../gdbm-sys"} # "~0.1"
+libc = "~0.2"
