@@ -219,13 +219,16 @@ impl Gdbm {
                 if len > 0 && slice[len - 1] == 0 {
                     slice = &slice[0..len-1];
                 }
-                let data = std::str::from_utf8(slice)?.to_string();
+                let res = match std::str::from_utf8(slice) {
+                    Ok(s) => Ok(s.to_string()),
+                    Err(e) => Err(e.into()),
+                };
 
                 // Free the malloc'd content that the library gave us
                 // Rust will manage this memory
                 free(content.dptr as *mut c_void);
 
-                return Ok(data);
+                return res;
             }
         }
     }
