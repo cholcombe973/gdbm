@@ -7,6 +7,6 @@ description = "Safe wrapper for gdbm-sys bindings"
 license = "MIT"
 
 [dependencies]
-bitflags = "~0.8"
+bitflags = "~1.2"
 gdbm-sys = { version = "~0.3", path = "../gdbm-sys" }
 libc = "~0.2"

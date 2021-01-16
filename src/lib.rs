@@ -110,32 +110,32 @@ fn get_error() -> String {
 }
 
 bitflags! {
-    pub flags Flags:  c_uint{
+    pub struct Flags: c_uint {
         /// Read only database access
-        const READER  = 0,
+        const READER  = 0;
         /// Read and Write access to the database
-        const WRITER  = 1,
+        const WRITER  = 1;
         /// Read, write and create the database if it does not already exist
-        const WRCREAT = 2,
+        const WRCREAT = 2;
         /// Create a new database regardless of whether one exised.  Gives read and write access
-        const NEWDB   = 3,
-        const FAST = 16,
+        const NEWDB   = 3;
+        const FAST = 16;
         /// Sync all operations to disk
-        const SYNC = 32,
+        const SYNC = 32;
         /// Prevents the library from locking the database file
-        const NOLOCK = 64,
+        const NOLOCK = 64;
     }
 }
 
 bitflags! {
-    pub flags StoreFlags:  c_uint{
-        const INSERT  = 0,
-        const REPLACE  = 1,
-        const CACHESIZE  = 1,
-        const FASTMODE  = 2,
-        const SYNCMODE  = 3,
-        const CENTFREE  = 4,
-        const COALESCEBLKS  = 5,
+    pub struct StoreFlags: c_uint {
+        const INSERT  = 0;
+        const REPLACE  = 1;
+        const CACHESIZE  = 1;
+        const FASTMODE  = 2;
+        const SYNCMODE  = 3;
+        const CENTFREE  = 4;
+        const COALESCEBLKS  = 5;
     }
 }
 
