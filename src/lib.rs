@@ -103,7 +103,7 @@ impl From<Error> for GdbmError {
 
 fn get_error() -> String {
     unsafe {
-        let error_ptr = gdbm_strerror(gdbm_errno);
+        let error_ptr = gdbm_strerror(*gdbm_errno_location());
         let err_string = CStr::from_ptr(error_ptr);
         return err_string.to_string_lossy().into_owned();
     }
@@ -149,6 +149,11 @@ pub struct Gdbm {
                            * int gdbm_version_cmp (int const a[], int const b[]);
                            * */
 }
+
+// Safety: Gdbm does have thread-local data, but it's only used to set
+// the gdbm_errno. We access that internally directly after calling
+// into the gdbm library, it's not used to keep state besides that.
+unsafe impl Send for Gdbm {}
 
 impl Drop for Gdbm {
     fn drop(&mut self) {
@@ -286,7 +291,7 @@ impl Gdbm {
             if result == 0 {
                 Ok(true)
             } else {
-                if gdbm_errno == 0 {
+                if *gdbm_errno_location() == 0 {
                     return Ok(true);
                 } else {
                     return Err(GdbmError::new(get_error()));
