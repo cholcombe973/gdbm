@@ -3,7 +3,7 @@ extern crate bitflags;
 extern crate gdbm_sys;
 extern crate libc;
 
-use std::error::Error as err;
+use std::error::Error as StdError;
 use std::io::Error;
 use std::fmt;
 use std::ffi::{CStr, CString, IntoStringError, NulError};
@@ -29,29 +29,29 @@ pub enum GdbmError {
 
 impl fmt::Display for GdbmError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str(self.description())
+        write!(f, "{}", self)
     }
 }
 
-impl err for GdbmError {
+impl StdError for GdbmError {
     fn description(&self) -> &str {
         match *self {
-            GdbmError::FromUtf8Error(ref e) => e.description(),
-            GdbmError::Utf8Error(ref e) => e.description(),
-            GdbmError::NulError(ref e) => e.description(),
-            GdbmError::Error(ref e) => &e,
-            GdbmError::IoError(ref e) => e.description(),
-            GdbmError::IntoStringError(ref e) => e.description(),
+            GdbmError::FromUtf8Error(ref _e) => "invalid utf-8 sequence",
+            GdbmError::Utf8Error(ref _e) => "invalid utf-8 sequence",
+            GdbmError::NulError(ref _e) => "nul byte found in provided data",
+            GdbmError::Error(ref _e) => "gdbm error",
+            GdbmError::IoError(ref _e) => "I/O error",
+            GdbmError::IntoStringError(ref _e) => "error",
         }
     }
-    fn cause(&self) -> Option<&err> {
+    fn cause(&self) -> Option<&dyn StdError> {
         match *self {
-            GdbmError::FromUtf8Error(ref e) => e.cause(),
-            GdbmError::Utf8Error(ref e) => e.cause(),
-            GdbmError::NulError(ref e) => e.cause(),
+            GdbmError::FromUtf8Error(ref e) => e.source(),
+            GdbmError::Utf8Error(ref e) => e.source(),
+            GdbmError::NulError(ref e) => e.source(),
             GdbmError::Error(_) => None,
-            GdbmError::IoError(ref e) => e.cause(),
-            GdbmError::IntoStringError(ref e) => e.cause(),
+            GdbmError::IoError(ref e) => e.source(),
+            GdbmError::IntoStringError(ref e) => e.source(),
         }
     }
 }
@@ -65,11 +65,11 @@ impl GdbmError {
     pub fn to_string(&self) -> String {
         match *self {
             GdbmError::FromUtf8Error(ref err) => err.utf8_error().to_string(),
-            GdbmError::Utf8Error(ref err) => err.description().to_string(),
-            GdbmError::NulError(ref err) => err.description().to_string(),
+            GdbmError::Utf8Error(ref err) => err.to_string(),
+            GdbmError::NulError(ref err) => err.to_string(),
             GdbmError::Error(ref err) => err.to_string(),
-            GdbmError::IoError(ref err) => err.description().to_string(),
-            GdbmError::IntoStringError(ref err) => err.description().to_string(),
+            GdbmError::IoError(ref err) => err.to_string(),
+            GdbmError::IntoStringError(ref err) => err.to_string(),
         }
     }
 }
