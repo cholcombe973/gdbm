@@ -110,7 +110,7 @@ fn get_error() -> String {
 }
 
 bitflags! {
-    pub struct Flags: c_uint {
+    pub struct Open: c_uint {
         /// Read only database access
         const READER  = 0;
         /// Read and Write access to the database
@@ -128,7 +128,7 @@ bitflags! {
 }
 
 bitflags! {
-    pub struct StoreFlags: c_uint {
+    pub struct Store: c_uint {
         const INSERT  = 0;
         const REPLACE  = 1;
         const CACHESIZE  = 1;
@@ -171,7 +171,7 @@ impl Gdbm {
     /// Open a DBM with location.
     /// mode (see http://www.manpagez.com/man/2/chmod,
     /// and http://www.manpagez.com/man/2/open), which is used if the file is created).
-    pub fn new(path: &Path, block_size: u32, flags: Flags, mode: i32) -> Result<Gdbm, GdbmError> {
+    pub fn new(path: &Path, block_size: u32, flags: Open, mode: i32) -> Result<Gdbm, GdbmError> {
         let path = CString::new(path.as_os_str().as_bytes())?;
         unsafe {
             let db_ptr = gdbm_open(path.as_ptr() as *mut i8,
@@ -189,7 +189,7 @@ impl Gdbm {
     /// -1 means the item was not stored.  0 means it was stored and +1 means it was
     /// not stored because the key already existed.  See the link below for more details.
     /// http://www.gnu.org.ua/software/gdbm/manual/gdbm.html#Store
-    pub fn store(&self, key: &str, content: &mut String, flag: StoreFlags) -> i32 {
+    pub fn store(&self, key: &str, content: &mut String, flag: Store) -> i32 {
         let key_datum = datum {
             dptr: key.as_ptr() as *mut i8,
             dsize: key.len() as i32,
