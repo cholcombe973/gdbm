@@ -8,5 +8,5 @@ license = "MIT"
 
 [dependencies]
 bitflags = "~1.2"
-gdbm-sys = { version = "~0.3", path = "../gdbm-sys" }
+gdbm-sys = { version = "~0.3", git = "https://github.com/miquels/gdbm-sys" }
 libc = "~0.2"
