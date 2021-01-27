@@ -210,13 +210,13 @@ impl Gdbm {
 
     /// Store a record in the database.
     ///
-    /// If `overwrite` is `false`, and the key already exists in the
+    /// If `replace` is `false`, and the key already exists in the
     /// database, the record is not stored and `false` is returned.
     /// Otherwise `true` is returned.
-    pub fn store(&self, key: &str, content: &String, overwrite: bool) -> Result<bool, GdbmError> {
+    pub fn store(&self, key: &str, content: &String, replace: bool) -> Result<bool, GdbmError> {
         let key_datum = datum("key", key)?;
         let content_datum = datum("content", content)?;
-        let flag = if overwrite { Store::REPLACE } else { Store::INSERT };
+        let flag = if replace { Store::REPLACE } else { Store::INSERT };
         let result = unsafe {
             gdbm_store(self.db_handle, key_datum, content_datum, flag.bits as i32)
         };
