@@ -144,14 +144,9 @@ bitflags! {
 }
 
 bitflags! {
-    pub struct Store: c_uint {
+    struct Store: c_uint {
         const INSERT  = 0;
         const REPLACE  = 1;
-        const CACHESIZE  = 1;
-        const FASTMODE  = 2;
-        const SYNCMODE  = 3;
-        const CENTFREE  = 4;
-        const COALESCEBLKS  = 5;
     }
 }
 
@@ -213,14 +208,15 @@ impl Gdbm {
         }
     }
 
-    /// This method returns an error, `true`, or `false`.
+    /// Store a record in the database.
     ///
-    /// `true` means it was stored and `false` means it was not stored because
-    /// the key already existed.  See the link below for more details.
-    /// http://www.gnu.org.ua/software/gdbm/manual/gdbm.html#Store
-    pub fn store(&self, key: &str, content: &String, flag: Store) -> Result<bool, GdbmError> {
+    /// If `overwrite` is `false`, and the key already exists in the
+    /// database, the record is not stored and `false` is returned.
+    /// Otherwise `true` is returned.
+    pub fn store(&self, key: &str, content: &String, overwrite: bool) -> Result<bool, GdbmError> {
         let key_datum = datum("key", key)?;
         let content_datum = datum("content", content)?;
+        let flag = if overwrite { Store::REPLACE } else { Store::INSERT };
         let result = unsafe {
             gdbm_store(self.db_handle, key_datum, content_datum, flag.bits as i32)
         };

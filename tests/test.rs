@@ -17,8 +17,10 @@ fn create_test() {
         .expect("Gdbm::new");
     // Lets write a key/value and then read it back
     let data = "blah".to_string();
-    let store_result = db.store("foo", &data, gdbm::Store::INSERT).expect("store");
+    let store_result = db.store("foo", &data, true).expect("store");
     assert_eq!(store_result, true);
+    let store_result = db.store("foo", &data, false).expect("store");
+    assert_eq!(store_result, false);
     let fetch_result = db.fetch("foo").expect("fetch");
     assert_eq!("blah".to_string(), fetch_result);
     drop(db);
