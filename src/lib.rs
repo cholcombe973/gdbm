@@ -57,8 +57,8 @@ impl StdError for GdbmError {
 }
 impl GdbmError {
     /// Create a new GdbmError with a String message
-    fn new(err: String) -> GdbmError {
-        GdbmError::Error(err)
+    fn new(err: impl Into<String>) -> GdbmError {
+        GdbmError::Error(err.into())
     }
 
     /// Convert a GdbmError into a String representation.
@@ -107,6 +107,21 @@ fn get_error() -> String {
         let err_string = CStr::from_ptr(error_ptr);
         return err_string.to_string_lossy().into_owned();
     }
+}
+
+fn datum(what: &str, data: impl AsRef<[u8]>) -> Result<datum, GdbmError> {
+    let data = data.as_ref();
+    if data.len() > i32::MAX as usize {
+        return Err(GdbmError::new(format!("{} too large", what)));
+    }
+    // Note that we cast data.as_ptr(), which is a *const u8, to
+    // a *mut i8. This is an artefact of the gdbm C interface where
+    // 'dptr' is not 'const'. However gdbm does treat it as
+    // const/immutable, so the cast is safe.
+    Ok(datum {
+        dptr: data.as_ptr() as *mut i8,
+        dsize: data.len() as i32,
+    })
 }
 
 bitflags! {
@@ -185,36 +200,34 @@ impl Gdbm {
             Ok(Gdbm { db_handle: db_ptr })
         }
     }
-    /// This function returns either -1, 0 or +1.
-    /// -1 means the item was not stored.  0 means it was stored and +1 means it was
-    /// not stored because the key already existed.  See the link below for more details.
+
+    /// This method returns an error, `true`, or `false`.
+    ///
+    /// `true` means it was stored and `false` means it was not stored because
+    /// the key already existed.  See the link below for more details.
     /// http://www.gnu.org.ua/software/gdbm/manual/gdbm.html#Store
-    pub fn store(&self, key: &str, content: &mut String, flag: Store) -> i32 {
-        let key_datum = datum {
-            dptr: key.as_ptr() as *mut i8,
-            dsize: key.len() as i32,
+    pub fn store(&self, key: &str, content: &String, flag: Store) -> Result<bool, GdbmError> {
+        let key_datum = datum("key", key)?;
+        let content_datum = datum("content", content)?;
+        let result = unsafe {
+            gdbm_store(self.db_handle, key_datum, content_datum, flag.bits as i32)
         };
-        let content_datum = datum {
-            dptr: content.as_ptr() as *mut i8,
-            dsize: content.len() as i32,
-        };
-        unsafe {
-            let result = gdbm_store(self.db_handle, key_datum, content_datum, flag.bits as i32);
-            result
+        if result < 0 {
+            return Err(GdbmError::new(get_error()));
         }
+        Ok(result == 0)
     }
 
     /// Retrieve a key from the database
     pub fn fetch(&self, key: &str) -> Result<String, GdbmError> {
         // datum gdbm_fetch(dbf, key);
-        let key_datum = datum {
-            dptr: key.as_ptr() as *mut i8,
-            dsize: key.len() as i32,
-        };
+        let key_datum = datum("key", key)?;
         unsafe {
             let content = gdbm_fetch(self.db_handle, key_datum);
             if content.dptr.is_null() {
                 return Err(GdbmError::new(get_error()));
+            } else if content.dsize < 0 {
+                return Err(GdbmError::new("content has negative size"));
             } else {
                 // handle the data as an utf8 encoded string slice
                 // that may or may not be terminated by a \0 byte.
@@ -240,9 +253,9 @@ impl Gdbm {
 
     /// Delete a key and value from the database
     pub fn delete(&self, key: &str) -> bool {
-        let key_datum = datum {
-            dptr: key.as_ptr() as *mut i8,
-            dsize: key.len() as i32,
+        let key_datum = match datum("key", key) {
+            Ok(d) => d,
+            Err(_) => return false,
         };
         unsafe {
             let result = gdbm_delete(self.db_handle, key_datum);
@@ -282,10 +295,7 @@ impl Gdbm {
 
     /// Check to see if a key exists in the database
     pub fn exists(&self, key: &str) -> Result<bool, GdbmError> {
-        let key_datum = datum {
-            dptr: key.as_ptr() as *mut i8,
-            dsize: key.len() as i32,
-        };
+        let key_datum = datum("key", key)?;
         unsafe {
             let result = gdbm_exists(self.db_handle, key_datum);
             if result == 0 {
