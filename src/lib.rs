@@ -8,6 +8,7 @@ use std::io::Error;
 use std::fmt;
 use std::ffi::{CStr, CString, IntoStringError, NulError};
 use std::os::unix::ffi::OsStrExt;
+use std::os::unix::io::{AsRawFd, RawFd};
 use std::path::Path;
 use std::str::Utf8Error;
 use std::string::FromUtf8Error;
@@ -182,6 +183,17 @@ impl Drop for Gdbm {
     }
 }
 
+/// With locking disabled (if gdbm_open was called with ‘GDBM_NOLOCK’), the user may want
+/// to perform their own file locking on the database file in order to prevent multiple
+/// writers operating on the same file simultaneously.
+impl AsRawFd for Gdbm {
+    fn as_raw_fd(&self) -> RawFd {
+        unsafe {
+            gdbm_fdesc(self.db_handle) as RawFd
+        }
+    }
+}
+
 impl Gdbm {
     /// Open a DBM with location.
     /// mode (see http://www.manpagez.com/man/2/chmod,
@@ -316,14 +328,4 @@ impl Gdbm {
     // }
     // }
     //
-
-    /// With locking disabled (if gdbm_open was called with ‘GDBM_NOLOCK’), the user may want
-    /// to perform their own file locking on the database file in order to prevent multiple
-    /// writers operating on the same file simultaneously.
-    pub fn fdesc(&self) -> ::std::os::raw::c_int {
-        unsafe {
-            let file_id = gdbm_fdesc(self.db_handle);
-            file_id
-        }
-    }
 }
