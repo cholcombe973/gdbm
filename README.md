@@ -1,4 +1,4 @@
-# gdbm
+# gdbm [![Rust](https://github.com/cholcombe973/gdbm/actions/workflows/rust.yml/badge.svg?branch=master)](https://github.com/cholcombe973/gdbm/actions/workflows/rust.yml)
 Rust gdbm safe interface
 
 ## Compiling
