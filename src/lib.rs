@@ -3,11 +3,12 @@ extern crate bitflags;
 extern crate gdbm_sys;
 extern crate libc;
 
-use std::error::Error as err;
+use std::error::Error as StdError;
 use std::io::Error;
 use std::fmt;
 use std::ffi::{CStr, CString, IntoStringError, NulError};
 use std::os::unix::ffi::OsStrExt;
+use std::os::unix::io::{AsRawFd, RawFd};
 use std::path::Path;
 use std::str::Utf8Error;
 use std::string::FromUtf8Error;
@@ -29,47 +30,47 @@ pub enum GdbmError {
 
 impl fmt::Display for GdbmError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str(self.description())
+        write!(f, "{}", self)
     }
 }
 
-impl err for GdbmError {
+impl StdError for GdbmError {
     fn description(&self) -> &str {
         match *self {
-            GdbmError::FromUtf8Error(ref e) => e.description(),
-            GdbmError::Utf8Error(ref e) => e.description(),
-            GdbmError::NulError(ref e) => e.description(),
-            GdbmError::Error(ref e) => &e,
-            GdbmError::IoError(ref e) => e.description(),
-            GdbmError::IntoStringError(ref e) => e.description(),
+            GdbmError::FromUtf8Error(ref _e) => "invalid utf-8 sequence",
+            GdbmError::Utf8Error(ref _e) => "invalid utf-8 sequence",
+            GdbmError::NulError(ref _e) => "nul byte found in provided data",
+            GdbmError::Error(ref _e) => "gdbm error",
+            GdbmError::IoError(ref _e) => "I/O error",
+            GdbmError::IntoStringError(ref _e) => "error",
         }
     }
-    fn cause(&self) -> Option<&err> {
+    fn cause(&self) -> Option<&dyn StdError> {
         match *self {
-            GdbmError::FromUtf8Error(ref e) => e.cause(),
-            GdbmError::Utf8Error(ref e) => e.cause(),
-            GdbmError::NulError(ref e) => e.cause(),
+            GdbmError::FromUtf8Error(ref e) => e.source(),
+            GdbmError::Utf8Error(ref e) => e.source(),
+            GdbmError::NulError(ref e) => e.source(),
             GdbmError::Error(_) => None,
-            GdbmError::IoError(ref e) => e.cause(),
-            GdbmError::IntoStringError(ref e) => e.cause(),
+            GdbmError::IoError(ref e) => e.source(),
+            GdbmError::IntoStringError(ref e) => e.source(),
         }
     }
 }
 impl GdbmError {
     /// Create a new GdbmError with a String message
-    fn new(err: String) -> GdbmError {
-        GdbmError::Error(err)
+    fn new(err: impl Into<String>) -> GdbmError {
+        GdbmError::Error(err.into())
     }
 
     /// Convert a GdbmError into a String representation.
     pub fn to_string(&self) -> String {
         match *self {
             GdbmError::FromUtf8Error(ref err) => err.utf8_error().to_string(),
-            GdbmError::Utf8Error(ref err) => err.description().to_string(),
-            GdbmError::NulError(ref err) => err.description().to_string(),
+            GdbmError::Utf8Error(ref err) => err.to_string(),
+            GdbmError::NulError(ref err) => err.to_string(),
             GdbmError::Error(ref err) => err.to_string(),
-            GdbmError::IoError(ref err) => err.description().to_string(),
-            GdbmError::IntoStringError(ref err) => err.description().to_string(),
+            GdbmError::IoError(ref err) => err.to_string(),
+            GdbmError::IntoStringError(ref err) => err.to_string(),
         }
     }
 }
@@ -103,39 +104,49 @@ impl From<Error> for GdbmError {
 
 fn get_error() -> String {
     unsafe {
-        let error_ptr = gdbm_strerror(gdbm_errno);
+        let error_ptr = gdbm_strerror(*gdbm_errno_location());
         let err_string = CStr::from_ptr(error_ptr);
         return err_string.to_string_lossy().into_owned();
     }
 }
 
+fn datum(what: &str, data: impl AsRef<[u8]>) -> Result<datum, GdbmError> {
+    let data = data.as_ref();
+    if data.len() > i32::MAX as usize {
+        return Err(GdbmError::new(format!("{} too large", what)));
+    }
+    // Note that we cast data.as_ptr(), which is a *const u8, to
+    // a *mut i8. This is an artefact of the gdbm C interface where
+    // 'dptr' is not 'const'. However gdbm does treat it as
+    // const/immutable, so the cast is safe.
+    Ok(datum {
+        dptr: data.as_ptr() as *mut i8,
+        dsize: data.len() as i32,
+    })
+}
+
 bitflags! {
-    pub flags Flags:  c_uint{
+    pub struct Open: c_uint {
         /// Read only database access
-        const READER  = 0,
+        const READER  = 0;
         /// Read and Write access to the database
-        const WRITER  = 1,
+        const WRITER  = 1;
         /// Read, write and create the database if it does not already exist
-        const WRCREAT = 2,
+        const WRCREAT = 2;
         /// Create a new database regardless of whether one exised.  Gives read and write access
-        const NEWDB   = 3,
-        const FAST = 16,
+        const NEWDB   = 3;
+        const FAST = 16;
         /// Sync all operations to disk
-        const SYNC = 32,
+        const SYNC = 32;
         /// Prevents the library from locking the database file
-        const NOLOCK = 64,
+        const NOLOCK = 64;
     }
 }
 
 bitflags! {
-    pub flags StoreFlags:  c_uint{
-        const INSERT  = 0,
-        const REPLACE  = 1,
-        const CACHESIZE  = 1,
-        const FASTMODE  = 2,
-        const SYNCMODE  = 3,
-        const CENTFREE  = 4,
-        const COALESCEBLKS  = 5,
+    struct Store: c_uint {
+        const INSERT  = 0;
+        const REPLACE  = 1;
     }
 }
 
@@ -150,6 +161,11 @@ pub struct Gdbm {
                            * */
 }
 
+// Safety: Gdbm does have thread-local data, but it's only used to set
+// the gdbm_errno. We access that internally directly after calling
+// into the gdbm library, it's not used to keep state besides that.
+unsafe impl Send for Gdbm {}
+
 impl Drop for Gdbm {
     fn drop(&mut self) {
         if self.db_handle.is_null() {
@@ -162,11 +178,22 @@ impl Drop for Gdbm {
     }
 }
 
+/// With locking disabled (if gdbm_open was called with ‘GDBM_NOLOCK’), the user may want
+/// to perform their own file locking on the database file in order to prevent multiple
+/// writers operating on the same file simultaneously.
+impl AsRawFd for Gdbm {
+    fn as_raw_fd(&self) -> RawFd {
+        unsafe {
+            gdbm_fdesc(self.db_handle) as RawFd
+        }
+    }
+}
+
 impl Gdbm {
     /// Open a DBM with location.
     /// mode (see http://www.manpagez.com/man/2/chmod,
     /// and http://www.manpagez.com/man/2/open), which is used if the file is created).
-    pub fn new(path: &Path, block_size: u32, flags: Flags, mode: i32) -> Result<Gdbm, GdbmError> {
+    pub fn new(path: &Path, block_size: u32, flags: Open, mode: i32) -> Result<Gdbm, GdbmError> {
         let path = CString::new(path.as_os_str().as_bytes())?;
         unsafe {
             let db_ptr = gdbm_open(path.as_ptr() as *mut i8,
@@ -180,36 +207,35 @@ impl Gdbm {
             Ok(Gdbm { db_handle: db_ptr })
         }
     }
-    /// This function returns either -1, 0 or +1.
-    /// -1 means the item was not stored.  0 means it was stored and +1 means it was
-    /// not stored because the key already existed.  See the link below for more details.
-    /// http://www.gnu.org.ua/software/gdbm/manual/gdbm.html#Store
-    pub fn store(&self, key: &str, content: &mut String, flag: StoreFlags) -> i32 {
-        let key_datum = datum {
-            dptr: key.as_ptr() as *mut i8,
-            dsize: key.len() as i32,
+
+    /// Store a record in the database.
+    ///
+    /// If `replace` is `false`, and the key already exists in the
+    /// database, the record is not stored and `false` is returned.
+    /// Otherwise `true` is returned.
+    pub fn store(&self, key: &str, content: &String, replace: bool) -> Result<bool, GdbmError> {
+        let key_datum = datum("key", key)?;
+        let content_datum = datum("content", content)?;
+        let flag = if replace { Store::REPLACE } else { Store::INSERT };
+        let result = unsafe {
+            gdbm_store(self.db_handle, key_datum, content_datum, flag.bits as i32)
         };
-        let content_datum = datum {
-            dptr: content.as_ptr() as *mut i8,
-            dsize: content.len() as i32,
-        };
-        unsafe {
-            let result = gdbm_store(self.db_handle, key_datum, content_datum, flag.bits as i32);
-            result
+        if result < 0 {
+            return Err(GdbmError::new(get_error()));
         }
+        Ok(result == 0)
     }
 
     /// Retrieve a key from the database
     pub fn fetch(&self, key: &str) -> Result<String, GdbmError> {
         // datum gdbm_fetch(dbf, key);
-        let key_datum = datum {
-            dptr: key.as_ptr() as *mut i8,
-            dsize: key.len() as i32,
-        };
+        let key_datum = datum("key", key)?;
         unsafe {
             let content = gdbm_fetch(self.db_handle, key_datum);
             if content.dptr.is_null() {
                 return Err(GdbmError::new(get_error()));
+            } else if content.dsize < 0 {
+                return Err(GdbmError::new("content has negative size"));
             } else {
                 // handle the data as an utf8 encoded string slice
                 // that may or may not be terminated by a \0 byte.
@@ -235,9 +261,9 @@ impl Gdbm {
 
     /// Delete a key and value from the database
     pub fn delete(&self, key: &str) -> bool {
-        let key_datum = datum {
-            dptr: key.as_ptr() as *mut i8,
-            dsize: key.len() as i32,
+        let key_datum = match datum("key", key) {
+            Ok(d) => d,
+            Err(_) => return false,
         };
         unsafe {
             let result = gdbm_delete(self.db_handle, key_datum);
@@ -277,16 +303,13 @@ impl Gdbm {
 
     /// Check to see if a key exists in the database
     pub fn exists(&self, key: &str) -> Result<bool, GdbmError> {
-        let key_datum = datum {
-            dptr: key.as_ptr() as *mut i8,
-            dsize: key.len() as i32,
-        };
+        let key_datum = datum("key", key)?;
         unsafe {
             let result = gdbm_exists(self.db_handle, key_datum);
             if result == 0 {
                 Ok(true)
             } else {
-                if gdbm_errno == 0 {
+                if *gdbm_errno_location() == 0 {
                     return Ok(true);
                 } else {
                     return Err(GdbmError::new(get_error()));
@@ -301,14 +324,4 @@ impl Gdbm {
     // }
     // }
     //
-
-    /// With locking disabled (if gdbm_open was called with ‘GDBM_NOLOCK’), the user may want
-    /// to perform their own file locking on the database file in order to prevent multiple
-    /// writers operating on the same file simultaneously.
-    pub fn fdesc(&self) -> ::std::os::raw::c_int {
-        unsafe {
-            let file_id = gdbm_fdesc(self.db_handle);
-            file_id
-        }
-    }
 }

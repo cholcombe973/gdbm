@@ -1,12 +1,12 @@
 [package]
 name = "gdbm"
-version = "0.1.1"
+version = "0.2.0"
 authors = ["Chris Holcombe <xfactor973@gmail.com>"]
 homepage = "https://github.com/cholcombe973/gdbm"
 description = "Safe wrapper for gdbm-sys bindings"
 license = "MIT"
 
 [dependencies]
-bitflags = "~0.8"
-gdbm-sys = "~0.2"
+bitflags = "~1.2"
+gdbm-sys = "~0.3"
 libc = "~0.2"
