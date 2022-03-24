@@ -1,3 +1,6 @@
+//! Safe interface to GNU dbm.
+//!
+//! The main documentation can be found at [`Gdbm`].
 #[macro_use]
 extern crate bitflags;
 extern crate gdbm_sys;
@@ -126,6 +129,7 @@ fn datum(what: &str, data: impl AsRef<[u8]>) -> Result<datum, GdbmError> {
 }
 
 bitflags! {
+    /// Flags for [`Gdbm::new`]
     pub struct Open: c_uint {
         /// Read only database access
         const READER  = 0;
@@ -150,6 +154,11 @@ bitflags! {
     }
 }
 
+/// An open `gdbm` database.
+///
+/// Note that a lot of the methods take arguments of type `impl AsRef<[u8]>`.
+/// This means you can pass types `String`, `&str`, `&String`, `&[u8]` directly.
+///
 #[derive(Debug)]
 pub struct Gdbm {
     db_handle: GDBM_FILE, /* int gdbm_export (GDBM_FILE, const char *, int, int);
@@ -191,15 +200,28 @@ impl AsRawFd for Gdbm {
 
 impl Gdbm {
     /// Open a DBM with location.
-    /// mode (see http://www.manpagez.com/man/2/chmod,
-    /// and http://www.manpagez.com/man/2/open), which is used if the file is created).
-    pub fn new(path: &Path, block_size: u32, flags: Open, mode: i32) -> Result<Gdbm, GdbmError> {
-        let path = CString::new(path.as_os_str().as_bytes())?;
+    ///
+    /// `mode` is the unix mode used when a database is created. See
+    /// [chmod](http://www.manpagez.com/man/2/chmod) and
+    /// [open](http://www.manpagez.com/man/2/open).
+    pub fn new(
+        path: impl AsRef<Path>,
+        block_size: u32,
+        flags: Open,
+        mode: u32
+    ) -> Result<Gdbm, GdbmError> {
+        if block_size > i32::MAX as u32 {
+            return Err(GdbmError::new("block_size too large"));
+        }
+        if mode > i32::MAX as u32 {
+            return Err(GdbmError::new("invalid mode"));
+        }
+        let path = CString::new(path.as_ref().as_os_str().as_bytes())?;
         unsafe {
             let db_ptr = gdbm_open(path.as_ptr() as *mut i8,
                                    block_size as i32,
                                    flags.bits as i32,
-                                   mode,
+                                   mode as i32,
                                    None);
             if db_ptr.is_null() {
                 return Err(GdbmError::new("gdbm_open failed".to_string()));
@@ -213,7 +235,12 @@ impl Gdbm {
     /// If `replace` is `false`, and the key already exists in the
     /// database, the record is not stored and `false` is returned.
     /// Otherwise `true` is returned.
-    pub fn store(&self, key: &str, content: &String, replace: bool) -> Result<bool, GdbmError> {
+    pub fn store(
+        &self,
+        key: impl AsRef<[u8]>,
+        content: impl AsRef<[u8]>,
+        replace: bool,
+    ) -> Result<bool, GdbmError> {
         let key_datum = datum("key", key)?;
         let content_datum = datum("content", content)?;
         let flag = if replace { Store::REPLACE } else { Store::INSERT };
@@ -226,8 +253,8 @@ impl Gdbm {
         Ok(result == 0)
     }
 
-    /// Retrieve a key from the database
-    pub fn fetch(&self, key: &str) -> Result<String, GdbmError> {
+    /// Retrieve a record from the database.
+    pub fn fetch_data(&self, key: impl AsRef<[u8]>) -> Result<Vec<u8>, GdbmError> {
         // datum gdbm_fetch(dbf, key);
         let key_datum = datum("key", key)?;
         unsafe {
@@ -237,39 +264,61 @@ impl Gdbm {
             } else if content.dsize < 0 {
                 return Err(GdbmError::new("content has negative size"));
             } else {
-                // handle the data as an utf8 encoded string slice
-                // that may or may not be terminated by a \0 byte.
                 let ptr = content.dptr as *const u8;
                 let len = content.dsize as usize;
-                let mut slice = std::slice::from_raw_parts(ptr, len);
-                if len > 0 && slice[len - 1] == 0 {
-                    slice = &slice[0..len-1];
-                }
-                let res = match std::str::from_utf8(slice) {
-                    Ok(s) => Ok(s.to_string()),
-                    Err(e) => Err(e.into()),
-                };
+                let slice = std::slice::from_raw_parts(ptr, len);
+                let vec = slice.to_vec();
 
                 // Free the malloc'd content that the library gave us
                 // Rust will manage this memory
                 free(content.dptr as *mut c_void);
 
-                return res;
+                return Ok(vec);
             }
         }
     }
 
-    /// Delete a key and value from the database
-    pub fn delete(&self, key: &str) -> bool {
-        let key_datum = match datum("key", key) {
-            Ok(d) => d,
-            Err(_) => return false,
-        };
-        unsafe {
-            let result = gdbm_delete(self.db_handle, key_datum);
-            if result == -1 { false } else { true }
-        }
+    /// Retrieve a string record from the database.
+    ///
+    /// If it exists, but the content is not a valid UTF-8 string,
+    /// `FromUtf8Error` will be returned.
+    pub fn fetch_string(&self, key: impl AsRef<[u8]>) -> Result<String, GdbmError> {
+        let vec = self.fetch_data(key)?;
+        let s = String::from_utf8(vec)?;
+        Ok(s)
     }
+
+    /// Retrieve a string record from the database and strip trailing '\0'.
+    ///
+    /// C libraries might store strings with their trailing '\0' byte.
+    /// This method is like `fetch_string` but it strips that byte.
+    pub fn fetch_cstring(&self, key: impl AsRef<[u8]>) -> Result<String, GdbmError> {
+        let vec = self.fetch_data(key)?;
+        let mut s = String::from_utf8(vec)?;
+        if s.ends_with("\0") {
+            s.pop();
+        }
+        Ok(s)
+    }
+
+    /// Delete a record from the database.
+    ///
+    /// Returns `false` if the key was not present, `true` if it
+    /// was present and the record was deleted.
+    pub fn delete(&self, key: impl AsRef<[u8]>) -> Result<bool, GdbmError> {
+        let key_datum = datum("key", key)?;
+        let result = unsafe {
+            gdbm_delete(self.db_handle, key_datum)
+        };
+        if result < 0 {
+            if unsafe { *gdbm_errno_location() } == 0 {
+                return Ok(false);
+            }
+            return Err(GdbmError::new(get_error()));
+        }
+        Ok(true)
+    }
+
     // TODO: Make an iterator out of this to hide the datum handling
     // pub fn firstkey(&self, key: &str) -> Result<String, GdbmError> {
     // unsafe {
@@ -301,8 +350,8 @@ impl Gdbm {
         }
     }
 
-    /// Check to see if a key exists in the database
-    pub fn exists(&self, key: &str) -> Result<bool, GdbmError> {
+    /// Check to see if a record with this key exists in the database
+    pub fn exists(&self, key: impl AsRef<[u8]>) -> Result<bool, GdbmError> {
         let key_datum = datum("key", key)?;
         unsafe {
             let result = gdbm_exists(self.db_handle, key_datum);
