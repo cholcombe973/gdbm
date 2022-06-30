@@ -8,6 +8,7 @@ use std::{
     fmt,
     io::Error,
     os::unix::ffi::OsStrExt,
+    os::unix::io::{AsRawFd, RawFd},
     path::Path,
     str::Utf8Error,
 };
@@ -56,7 +57,11 @@ fn get_error() -> (String, i32) {
 fn datum(what: &str, data: impl AsRef<[u8]>) -> Result<datum, GdbmError> {
     let data = data.as_ref();
     if data.len() > i32::MAX as usize {
-        return Err(GdbmError::new(format!("{} too large", what)));
+        let (msg, raw_value) = get_error();
+        return Err(GdbmError::String {
+            msg: msg,
+            source: anyhow!("{} too large", what).context(raw_value),
+        });
     }
     // Note that we cast data.as_ptr(), which is a *const u8, to
     // a *mut i8. This is an artefact of the gdbm C interface where
@@ -150,10 +155,9 @@ impl Gdbm {
                 None,
             );
             if db_ptr.is_null() {
-                let raw_error = gdbm_errno_location();
-                let raw_value = std::ptr::read(raw_error);
+                let (msg, raw_value) = get_error();
                 return Err(GdbmError::String {
-                    msg: "gdbm_open failed".to_string(),
+                    msg: msg,
                     source: anyhow!("gdbm_open failed").context(raw_value),
                 });
             }
@@ -177,7 +181,11 @@ impl Gdbm {
         let result =
             unsafe { gdbm_store(self.db_handle, key_datum, content_datum, flag.bits as i32) };
         if result < 0 {
-            return Err(GdbmError::new(get_error()));
+            let (msg, raw_value) = get_error();
+            return Err(GdbmError::String {
+                msg: msg,
+                source: anyhow!("gdbm_store failed").context(raw_value),
+            });
         }
         Ok(result == 0)
     }
