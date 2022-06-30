@@ -131,9 +131,7 @@ impl Drop for Gdbm {
 /// writers operating on the same file simultaneously.
 impl AsRawFd for Gdbm {
     fn as_raw_fd(&self) -> RawFd {
-        unsafe {
-            gdbm_fdesc(self.db_handle) as RawFd
-        }
+        unsafe { gdbm_fdesc(self.db_handle) as RawFd }
     }
 }
 
@@ -171,10 +169,13 @@ impl Gdbm {
     pub fn store(&self, key: &str, content: &String, replace: bool) -> Result<bool, GdbmError> {
         let key_datum = datum("key", key)?;
         let content_datum = datum("content", content)?;
-        let flag = if replace { Store::REPLACE } else { Store::INSERT };
-        let result = unsafe {
-            gdbm_store(self.db_handle, key_datum, content_datum, flag.bits as i32)
+        let flag = if replace {
+            Store::REPLACE
+        } else {
+            Store::INSERT
         };
+        let result =
+            unsafe { gdbm_store(self.db_handle, key_datum, content_datum, flag.bits as i32) };
         if result < 0 {
             return Err(GdbmError::new(get_error()));
         }
