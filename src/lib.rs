@@ -1,112 +1,55 @@
 #[macro_use]
 extern crate bitflags;
-extern crate gdbm_sys;
-extern crate libc;
+use anyhow::anyhow;
+use thiserror::Error;
 
-use std::error::Error as StdError;
-use std::io::Error;
-use std::fmt;
-use std::ffi::{CStr, CString, IntoStringError, NulError};
-use std::os::unix::ffi::OsStrExt;
-use std::os::unix::io::{AsRawFd, RawFd};
-use std::path::Path;
-use std::str::Utf8Error;
-use std::string::FromUtf8Error;
+use std::{
+    ffi::{CStr, CString, NulError},
+    fmt,
+    io::Error,
+    os::unix::ffi::OsStrExt,
+    path::Path,
+    str::Utf8Error,
+};
 
 use libc::{c_uint, c_void, free};
 
 use gdbm_sys::*;
 
 /// Custom error handling for the library
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum GdbmError {
-    FromUtf8Error(FromUtf8Error),
-    Utf8Error(Utf8Error),
-    NulError(NulError),
-    Error(String),
-    IoError(Error),
-    IntoStringError(IntoStringError),
+    Utf8Error {
+        #[from]
+        source: Utf8Error,
+    },
+    NulError {
+        #[from]
+        source: NulError,
+    },
+    Error {
+        #[from]
+        source: Error,
+    },
+    String {
+        msg: String,
+        source: anyhow::Error,
+    },
 }
 
 impl fmt::Display for GdbmError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self)
+        f.write_str(&self.to_string())
     }
 }
 
-impl StdError for GdbmError {
-    fn description(&self) -> &str {
-        match *self {
-            GdbmError::FromUtf8Error(ref _e) => "invalid utf-8 sequence",
-            GdbmError::Utf8Error(ref _e) => "invalid utf-8 sequence",
-            GdbmError::NulError(ref _e) => "nul byte found in provided data",
-            GdbmError::Error(ref _e) => "gdbm error",
-            GdbmError::IoError(ref _e) => "I/O error",
-            GdbmError::IntoStringError(ref _e) => "error",
-        }
-    }
-    fn cause(&self) -> Option<&dyn StdError> {
-        match *self {
-            GdbmError::FromUtf8Error(ref e) => e.source(),
-            GdbmError::Utf8Error(ref e) => e.source(),
-            GdbmError::NulError(ref e) => e.source(),
-            GdbmError::Error(_) => None,
-            GdbmError::IoError(ref e) => e.source(),
-            GdbmError::IntoStringError(ref e) => e.source(),
-        }
-    }
-}
-impl GdbmError {
-    /// Create a new GdbmError with a String message
-    fn new(err: impl Into<String>) -> GdbmError {
-        GdbmError::Error(err.into())
-    }
-
-    /// Convert a GdbmError into a String representation.
-    pub fn to_string(&self) -> String {
-        match *self {
-            GdbmError::FromUtf8Error(ref err) => err.utf8_error().to_string(),
-            GdbmError::Utf8Error(ref err) => err.to_string(),
-            GdbmError::NulError(ref err) => err.to_string(),
-            GdbmError::Error(ref err) => err.to_string(),
-            GdbmError::IoError(ref err) => err.to_string(),
-            GdbmError::IntoStringError(ref err) => err.to_string(),
-        }
-    }
-}
-
-impl From<NulError> for GdbmError {
-    fn from(err: NulError) -> GdbmError {
-        GdbmError::NulError(err)
-    }
-}
-impl From<FromUtf8Error> for GdbmError {
-    fn from(err: FromUtf8Error) -> GdbmError {
-        GdbmError::FromUtf8Error(err)
-    }
-}
-impl From<::std::str::Utf8Error> for GdbmError {
-    fn from(err: ::std::str::Utf8Error) -> GdbmError {
-        GdbmError::Utf8Error(err)
-    }
-}
-impl From<IntoStringError> for GdbmError {
-    fn from(err: IntoStringError) -> GdbmError {
-        GdbmError::IntoStringError(err)
-    }
-}
-impl From<Error> for GdbmError {
-    fn from(err: Error) -> GdbmError {
-        GdbmError::IoError(err)
-    }
-}
-
-
-fn get_error() -> String {
+fn get_error() -> (String, i32) {
     unsafe {
-        let error_ptr = gdbm_strerror(*gdbm_errno_location());
+        let error_ptr = gdbm_errno_location();
+        let raw_value = std::ptr::read(error_ptr);
+        let error_ptr = gdbm_strerror(*error_ptr);
         let err_string = CStr::from_ptr(error_ptr);
-        return err_string.to_string_lossy().into_owned();
+        return (err_string.to_string_lossy().into_owned(), raw_value);
     }
 }
 
@@ -126,7 +69,7 @@ fn datum(what: &str, data: impl AsRef<[u8]>) -> Result<datum, GdbmError> {
 }
 
 bitflags! {
-    pub struct Open: c_uint {
+    pub struct Open:  c_uint{
         /// Read only database access
         const READER  = 0;
         /// Read and Write access to the database
@@ -144,9 +87,14 @@ bitflags! {
 }
 
 bitflags! {
-    struct Store: c_uint {
+    pub struct Store:  c_uint{
         const INSERT  = 0;
         const REPLACE  = 1;
+        const CACHESIZE  = 1;
+        const FASTMODE  = 2;
+        const SYNCMODE  = 3;
+        const CENTFREE  = 4;
+        const COALESCEBLKS  = 5;
     }
 }
 
@@ -196,13 +144,20 @@ impl Gdbm {
     pub fn new(path: &Path, block_size: u32, flags: Open, mode: i32) -> Result<Gdbm, GdbmError> {
         let path = CString::new(path.as_os_str().as_bytes())?;
         unsafe {
-            let db_ptr = gdbm_open(path.as_ptr() as *mut i8,
-                                   block_size as i32,
-                                   flags.bits as i32,
-                                   mode,
-                                   None);
+            let db_ptr = gdbm_open(
+                path.as_ptr() as *mut i8,
+                block_size as i32,
+                flags.bits as i32,
+                mode,
+                None,
+            );
             if db_ptr.is_null() {
-                return Err(GdbmError::new("gdbm_open failed".to_string()));
+                let raw_error = gdbm_errno_location();
+                let raw_value = std::ptr::read(raw_error);
+                return Err(GdbmError::String {
+                    msg: "gdbm_open failed".to_string(),
+                    source: anyhow!("gdbm_open failed").context(raw_value),
+                });
             }
             Ok(Gdbm { db_handle: db_ptr })
         }
@@ -233,9 +188,11 @@ impl Gdbm {
         unsafe {
             let content = gdbm_fetch(self.db_handle, key_datum);
             if content.dptr.is_null() {
-                return Err(GdbmError::new(get_error()));
-            } else if content.dsize < 0 {
-                return Err(GdbmError::new("content has negative size"));
+                let (error_str, raw_value) = get_error();
+                return Err(GdbmError::String {
+                    msg: error_str,
+                    source: anyhow!("gdbm_fetch failed").context(raw_value),
+                });
             } else {
                 // handle the data as an utf8 encoded string slice
                 // that may or may not be terminated by a \0 byte.
@@ -243,7 +200,7 @@ impl Gdbm {
                 let len = content.dsize as usize;
                 let mut slice = std::slice::from_raw_parts(ptr, len);
                 if len > 0 && slice[len - 1] == 0 {
-                    slice = &slice[0..len-1];
+                    slice = &slice[0..len - 1];
                 }
                 let res = match std::str::from_utf8(slice) {
                     Ok(s) => Ok(s.to_string()),
@@ -267,7 +224,11 @@ impl Gdbm {
         };
         unsafe {
             let result = gdbm_delete(self.db_handle, key_datum);
-            if result == -1 { false } else { true }
+            if result == -1 {
+                false
+            } else {
+                true
+            }
         }
     }
     // TODO: Make an iterator out of this to hide the datum handling
@@ -309,10 +270,14 @@ impl Gdbm {
             if result == 0 {
                 Ok(true)
             } else {
-                if *gdbm_errno_location() == 0 {
+                if gdbm_errno_location().is_null() {
                     return Ok(true);
                 } else {
-                    return Err(GdbmError::new(get_error()));
+                    let (error_str, raw_value) = get_error();
+                    return Err(GdbmError::String {
+                        msg: error_str,
+                        source: anyhow!("gdbm_exists failed").context(raw_value),
+                    });
                 }
             }
         }
