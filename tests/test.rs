@@ -13,7 +13,7 @@ fn create_test() {
     let db = gdbm::Gdbm::new(Path::new("test.db"),
                                  0,
                                  gdbm::Open::NEWDB,
-                                 (S_IRUSR | S_IWUSR) as i32)
+                                 S_IRUSR | S_IWUSR)
         .expect("Gdbm::new");
     // Lets write a key/value and then read it back
     let data = "blah".to_string();
@@ -21,7 +21,7 @@ fn create_test() {
     assert_eq!(store_result, true);
     let store_result = db.store("foo", &data, false).expect("store");
     assert_eq!(store_result, false);
-    let fetch_result = db.fetch("foo").expect("fetch");
+    let fetch_result = db.fetch_string("foo").expect("fetch");
     assert_eq!("blah".to_string(), fetch_result);
     drop(db);
     remove_file("test.db").expect("remove_file");
